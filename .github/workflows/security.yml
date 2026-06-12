@@ -1,0 +1,83 @@
+name: Security Scan
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build DMG
+        run: ./build.sh dmg
+
+      - name: Submit to VirusTotal
+        id: vt_upload
+        env:
+          VT_API_KEY: ${{ secrets.VIRUSTOTAL_API_KEY }}
+        run: |
+          RESPONSE=$(curl -s --request POST \
+            --url https://www.virustotal.com/api/v3/files \
+            --header "x-apikey: $VT_API_KEY" \
+            --form file=@build/GuitarTuner.dmg)
+          echo "Upload response: $RESPONSE"
+          ANALYSIS_ID=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['id'])")
+          echo "analysis_id=$ANALYSIS_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for VirusTotal analysis
+        id: vt_result
+        env:
+          VT_API_KEY: ${{ secrets.VIRUSTOTAL_API_KEY }}
+          ANALYSIS_ID: ${{ steps.vt_upload.outputs.analysis_id }}
+        run: |
+          for i in $(seq 1 12); do
+            sleep 30
+            RESULT=$(curl -s --request GET \
+              --url "https://www.virustotal.com/api/v3/analyses/$ANALYSIS_ID" \
+              --header "x-apikey: $VT_API_KEY")
+            STATUS=$(echo "$RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['attributes']['status'])")
+            echo "Attempt $i — status: $STATUS"
+            if [ "$STATUS" = "completed" ]; then
+              MALICIOUS=$(echo "$RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['attributes']['stats']['malicious'])")
+              SUSPICIOUS=$(echo "$RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['attributes']['stats']['suspicious'])")
+              TOTAL=$(echo "$RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); s=d['data']['attributes']['stats']; print(sum(s.values()))")
+              echo "malicious=$MALICIOUS" >> "$GITHUB_OUTPUT"
+              echo "suspicious=$SUSPICIOUS" >> "$GITHUB_OUTPUT"
+              echo "total=$TOTAL" >> "$GITHUB_OUTPUT"
+              # Extract file SHA256 for the public report URL
+              SHA=$(curl -s --request GET \
+                --url "https://www.virustotal.com/api/v3/analyses/$ANALYSIS_ID" \
+                --header "x-apikey: $VT_API_KEY" \
+                | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('meta',{}).get('file_info',{}).get('sha256',''))")
+              echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
+              break
+            fi
+          done
+          if [ "$STATUS" != "completed" ]; then
+            echo "VirusTotal analysis timed out" >&2
+            exit 1
+          fi
+
+      - name: Evaluate results
+        env:
+          MALICIOUS: ${{ steps.vt_result.outputs.malicious }}
+          SUSPICIOUS: ${{ steps.vt_result.outputs.suspicious }}
+          TOTAL: ${{ steps.vt_result.outputs.total }}
+          SHA256: ${{ steps.vt_result.outputs.sha256 }}
+        run: |
+          echo "VirusTotal results: $MALICIOUS malicious, $SUSPICIOUS suspicious out of $TOTAL engines"
+          if [ "$SHA256" != "" ]; then
+            echo "Report: https://www.virustotal.com/gui/file/$SHA256"
+          fi
+          if [ "$MALICIOUS" -gt 0 ]; then
+            echo "FAILED: $MALICIOUS engines flagged this file as malicious" >&2
+            exit 1
+          fi
+          echo "All clear — 0/$TOTAL engines flagged the DMG"

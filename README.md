@@ -1,5 +1,8 @@
 # Guitar Tuner
 
+[![CI](https://github.com/Letch49/guitar-tuner/actions/workflows/ci.yml/badge.svg)](https://github.com/Letch49/guitar-tuner/actions/workflows/ci.yml)
+[![Security Scan](https://github.com/Letch49/guitar-tuner/actions/workflows/security.yml/badge.svg)](https://github.com/Letch49/guitar-tuner/actions/workflows/security.yml)
+
 Native guitar tuner for macOS. Pluck a string — the app detects which string you’re playing and shows a needle for how far off you are (in cents).
 
 Built with Swift + SwiftUI. Pitch detection uses the YIN algorithm (no external dependencies).

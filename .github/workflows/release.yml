@@ -8,7 +8,12 @@ permissions:
   contents: write
 
 jobs:
+  security:
+    uses: ./.github/workflows/security.yml
+    secrets: inherit
+
   release:
+    needs: security
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
