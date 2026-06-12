@@ -12,9 +12,14 @@ final class TunerViewModel: ObservableObject {
         didSet {
             guard oldValue != selectedTuning else { return }
             tunedStrings.removeAll()
+            pinnedString = nil
             UserDefaults.standard.set(selectedTuning.id, forKey: Self.tuningKey)
         }
     }
+
+    /// Manually selected string: detection is locked to it and other
+    /// strings are ignored. nil = automatic string detection.
+    @Published var pinnedString: Int?
 
     @Published var devices: [AudioInputDevice] = []
     @Published var selectedDeviceUID: String? {
@@ -49,6 +54,7 @@ final class TunerViewModel: ObservableObject {
 
     private let capture = AudioCapture()
     private let tracker = PitchTracker()
+    private let tonePlayer = TonePlayer()
 
     private let inTuneCents: Double = 5
     private let holdToConfirm: TimeInterval = 0.8
@@ -132,6 +138,19 @@ final class TunerViewModel: ObservableObject {
         tunedStrings.removeAll()
     }
 
+    /// Tap on a string: pin it (lock tuning to it) and play its reference
+    /// note. Tapping the pinned string again unpins it.
+    func toggleStringPin(_ index: Int) {
+        if pinnedString == index {
+            pinnedString = nil
+            tonePlayer.stop()
+        } else {
+            pinnedString = index
+            recentFrequencies.removeAll()
+            tonePlayer.play(frequency: selectedTuning.notes[index].frequency)
+        }
+    }
+
     private func startCapture() {
         tracker.reset()
         do {
@@ -171,14 +190,21 @@ final class TunerViewModel: ObservableObject {
         guard recentFrequencies.count >= 3, let smoothed = median(of: recentFrequencies) else { return }
 
         let notes = selectedTuning.notes
-        var bestIndex = 0
-        var bestOffset = Double.greatestFiniteMagnitude
-        for (index, note) in notes.enumerated() {
-            let offset = abs(1200 * log2(smoothed / note.frequency))
-            if offset < bestOffset {
-                bestOffset = offset
-                bestIndex = index
+        let bestIndex: Int
+        if let pinned = pinnedString {
+            // Locked to one string: everything is measured against it.
+            bestIndex = pinned
+        } else {
+            var best = 0
+            var bestOffset = Double.greatestFiniteMagnitude
+            for (index, note) in notes.enumerated() {
+                let offset = abs(1200 * log2(smoothed / note.frequency))
+                if offset < bestOffset {
+                    bestOffset = offset
+                    best = index
+                }
             }
+            bestIndex = best
         }
 
         let targetCents = max(-50, min(50, 1200 * log2(smoothed / notes[bestIndex].frequency)))

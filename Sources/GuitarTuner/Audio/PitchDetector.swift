@@ -2,7 +2,20 @@ import Foundation
 import Accelerate
 
 /// Monophonic pitch detection using the YIN algorithm
-/// (de Cheveigné & Kawahara, 2002) with parabolic interpolation.
+/// (de Cheveigné & Kawahara, 2002).
+///
+/// The detection core is ported from Beethoven (MIT License,
+/// https://github.com/vadymmarkov/Beethoven), YIN implementation by
+/// Guillaume Laurent, adapted from pYIN by Matthias Mauch (Centre for
+/// Digital Music, Queen Mary, University of London).
+///
+/// Key behavior inherited from Beethoven: a strict absolute threshold
+/// (0.05) for confident detections, and an unconditional fallback to the
+/// global minimum of the cumulative mean normalized difference function.
+/// Weak fundamentals (low strings through a laptop microphone) rarely dip
+/// below any fixed threshold, so rejecting them outright loses the note;
+/// temporal-consistency filtering upstream rejects the occasional garbage
+/// estimate instead.
 enum YIN {
     /// - Returns: detected fundamental frequency in Hz, or nil if no clear pitch.
     static func detectPitch(
@@ -10,84 +23,115 @@ enum YIN {
         sampleRate: Double,
         minFrequency: Double = 52,   // just below A1 (55 Hz), above 50 Hz mains hum
         maxFrequency: Double = 600,  // highest open string E4 = 330 Hz, with margin
-        threshold: Float = 0.2
+        threshold: Float = 0.05
     ) -> Double? {
-        let n = samples.count
-        let tauMin = max(2, Int(sampleRate / maxFrequency))
-        let tauMax = min(n / 2, Int(sampleRate / minFrequency))
-        guard tauMax > tauMin + 2 else { return nil }
+        let half = samples.count / 2
+        guard half > 4 else { return nil }
 
-        let windowLength = n - tauMax
+        var yinBuffer = difference(buffer: samples)
+        cumulativeDifference(yinBuffer: &yinBuffer)
 
-        // Difference function: d[tau] = sum_{i} (x[i] - x[i+tau])^2
-        var d = [Float](repeating: 0, count: tauMax + 1)
-        samples.withUnsafeBufferPointer { ptr in
+        let tau = absoluteThreshold(yinBuffer: yinBuffer, withThreshold: threshold)
+        guard tau != 0 else { return nil }
+
+        // Beethoven encodes the global-minimum fallback as a negative tau.
+        let effectiveTau = abs(tau)
+        let interpolatedTau = parabolicInterpolation(yinBuffer: yinBuffer, tau: effectiveTau)
+        guard interpolatedTau > 0 else { return nil }
+
+        let frequency = sampleRate / Double(interpolatedTau)
+        guard frequency >= minFrequency, frequency <= maxFrequency else { return nil }
+        return frequency
+    }
+
+    /// Squared difference function d(tau), vDSP-accelerated
+    /// (Beethoven's `YINUtil.differenceA`).
+    private static func difference(buffer: [Float]) -> [Float] {
+        let half = buffer.count / 2
+        var result = [Float](repeating: 0, count: half)
+        var temp = [Float](repeating: 0, count: half)
+        var tempSq = [Float](repeating: 0, count: half)
+        let len = vDSP_Length(half)
+
+        buffer.withUnsafeBufferPointer { ptr in
             guard let base = ptr.baseAddress else { return }
-            for tau in 1...tauMax {
-                var dist: Float = 0
-                vDSP_distancesq(base, 1, base + tau, 1, &dist, vDSP_Length(windowLength))
-                d[tau] = dist
+            for tau in 0..<half {
+                var sum: Float = 0
+                vDSP_vsub(base + tau, 1, base, 1, &temp, 1, len)
+                vDSP_vsq(temp, 1, &tempSq, 1, len)
+                vDSP_sve(tempSq, 1, &sum, len)
+                result[tau] = sum
             }
         }
+        return result
+    }
 
-        // Cumulative mean normalized difference function.
-        var cmnd = [Float](repeating: 1, count: tauMax + 1)
-        var runningSum: Float = 0
-        for tau in 1...tauMax {
-            runningSum += d[tau]
-            cmnd[tau] = runningSum > 0 ? d[tau] * Float(tau) / runningSum : 1
+    /// Cumulative mean normalized difference (Beethoven's `cumulativeDifference`).
+    private static func cumulativeDifference(yinBuffer: inout [Float]) {
+        yinBuffer[0] = 1.0
+        var runningSum: Float = 0.0
+        for tau in 1..<yinBuffer.count {
+            runningSum += yinBuffer[tau]
+            if runningSum == 0 {
+                yinBuffer[tau] = 1
+            } else {
+                yinBuffer[tau] *= Float(tau) / runningSum
+            }
         }
+    }
 
-        // Absolute threshold: first tau where cmnd dips below threshold,
-        // then descend to the local minimum.
-        var tauEstimate = -1
-        var tau = tauMin
-        while tau <= tauMax {
-            if cmnd[tau] < threshold {
-                while tau + 1 <= tauMax && cmnd[tau + 1] < cmnd[tau] {
+    /// First dip below the threshold, descending to its local minimum.
+    /// Returns `-minTau` (global minimum) when nothing dips below the
+    /// threshold, 0 when there is no usable minimum at all
+    /// (Beethoven's `absoluteThreshold`).
+    private static func absoluteThreshold(yinBuffer: [Float], withThreshold threshold: Float) -> Int {
+        var tau = 2
+        var minTau = 0
+        var minVal: Float = 1000.0
+
+        while tau < yinBuffer.count {
+            if yinBuffer[tau] < threshold {
+                while tau + 1 < yinBuffer.count && yinBuffer[tau + 1] < yinBuffer[tau] {
                     tau += 1
                 }
-                tauEstimate = tau
-                break
+                return tau
+            } else {
+                if yinBuffer[tau] < minVal {
+                    minVal = yinBuffer[tau]
+                    minTau = tau
+                }
             }
             tau += 1
         }
 
-        // Fallback for weak fundamentals (e.g. low strings through a laptop mic):
-        // accept the global minimum, but only if it is still a clear dip —
-        // anything weaker is noise and produces phantom notes.
-        if tauEstimate < 0 {
-            var bestTau = tauMin
-            var bestValue = cmnd[tauMin]
-            for tau in tauMin...tauMax where cmnd[tau] < bestValue {
-                bestValue = cmnd[tau]
-                bestTau = tau
-            }
-            if bestValue < 0.42 {
-                tauEstimate = bestTau
-            }
+        if minTau > 0 {
+            return -minTau
         }
-        guard tauEstimate > 0 else { return nil }
+        return 0
+    }
 
-        // Parabolic interpolation around the minimum for sub-sample precision.
-        let betterTau: Double
-        if tauEstimate > tauMin && tauEstimate < tauMax {
-            let s0 = Double(cmnd[tauEstimate - 1])
-            let s1 = Double(cmnd[tauEstimate])
-            let s2 = Double(cmnd[tauEstimate + 1])
-            let denominator = 2 * (2 * s1 - s2 - s0)
-            if abs(denominator) > 1e-12 {
-                betterTau = Double(tauEstimate) + (s2 - s0) / denominator
-            } else {
-                betterTau = Double(tauEstimate)
+    /// Parabolic interpolation around the minimum for sub-sample precision
+    /// (Beethoven's `parabolicInterpolation`).
+    private static func parabolicInterpolation(yinBuffer: [Float], tau: Int) -> Float {
+        guard tau < yinBuffer.count else {
+            return Float(tau)
+        }
+
+        var betterTau: Float
+        if tau > 0 && tau < yinBuffer.count - 1 {
+            let s0 = yinBuffer[tau - 1]
+            let s1 = yinBuffer[tau]
+            let s2 = yinBuffer[tau + 1]
+
+            var adjustment = (s2 - s0) / (2.0 * (2.0 * s1 - s2 - s0))
+            if !adjustment.isFinite || abs(adjustment) > 1 {
+                adjustment = 0
             }
+            betterTau = Float(tau) + adjustment
         } else {
-            betterTau = Double(tauEstimate)
+            betterTau = Float(tau)
         }
-
-        let frequency = sampleRate / betterTau
-        guard frequency >= minFrequency * 0.9, frequency <= maxFrequency * 1.1 else { return nil }
-        return frequency
+        return abs(betterTau)
     }
 }
 

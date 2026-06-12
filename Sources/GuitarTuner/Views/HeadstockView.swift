@@ -116,6 +116,7 @@ struct HeadstockView: View {
                 path.addLine(to: CGPoint(x: slotX, y: designSize.height))
 
                 let state = stringState(index)
+                let isPinned = viewModel.pinnedString == index
                 let color: Color
                 let width: CGFloat
                 switch state {
@@ -129,8 +130,8 @@ struct HeadstockView: View {
                     color = Theme.accent.opacity(0.55)
                     width = 1.6
                 case .idle:
-                    color = Color(white: 0.62).opacity(0.8)
-                    width = 1.3
+                    color = isPinned ? Theme.accent.opacity(0.7) : Color(white: 0.62).opacity(0.8)
+                    width = isPinned ? 2.0 : 1.3
                 }
                 context.stroke(path, with: .color(color), lineWidth: width)
             }
@@ -172,8 +173,11 @@ struct HeadstockView: View {
             let labelCenter = CGPoint(x: isLeft ? cx - labelOffsetX : cx + labelOffsetX, y: post.y)
             StringLabel(
                 note: viewModel.selectedTuning.notes[index],
-                state: stringState(index)
-            )
+                state: stringState(index),
+                isPinned: viewModel.pinnedString == index
+            ) {
+                viewModel.toggleStringPin(index)
+            }
             .position(labelCenter)
         }
     }
@@ -181,6 +185,10 @@ struct HeadstockView: View {
     private struct StringLabel: View {
         let note: Note
         let state: StringState
+        let isPinned: Bool
+        let action: () -> Void
+
+        @State private var hovering = false
 
         private var fillColor: Color {
             switch state {
@@ -191,10 +199,11 @@ struct HeadstockView: View {
         }
 
         private var ringColor: Color {
+            if isPinned { return Theme.accent }
             switch state {
             case .active: return Theme.warn
             case .inTune, .tuned: return Theme.accent
-            case .idle: return Color.white.opacity(0.08)
+            case .idle: return hovering ? Color.white.opacity(0.3) : Color.white.opacity(0.08)
             }
         }
 
@@ -207,24 +216,40 @@ struct HeadstockView: View {
         }
 
         var body: some View {
-            ZStack {
-                Circle()
-                    .fill(fillColor)
-                Circle()
-                    .strokeBorder(ringColor, lineWidth: 2)
-                VStack(spacing: -2) {
-                    Text(note.name)
-                        .font(.system(size: 20, weight: .semibold, design: .rounded))
-                        .foregroundColor(textColor)
-                    if state == .tuned {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundColor(textColor.opacity(0.7))
+            Button(action: action) {
+                ZStack {
+                    Circle()
+                        .fill(fillColor)
+                    Circle()
+                        .strokeBorder(ringColor, lineWidth: isPinned ? 3 : 2)
+                    VStack(spacing: -2) {
+                        Text(note.name)
+                            .font(.system(size: 20, weight: .semibold, design: .rounded))
+                            .foregroundColor(textColor)
+                        if state == .tuned {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundColor(textColor.opacity(0.7))
+                        } else if isPinned {
+                            Image(systemName: "pin.fill")
+                                .font(.system(size: 8, weight: .bold))
+                                .foregroundColor(textColor.opacity(0.7))
+                        }
                     }
                 }
+                .frame(width: 58, height: 58)
+                .shadow(color: isPinned ? Theme.accent.opacity(0.55) : .clear, radius: isPinned ? 9 : 0)
+                .scaleEffect(hovering && !isPinned ? 1.06 : 1.0)
+                .contentShape(Circle())
             }
-            .frame(width: 58, height: 58)
+            .buttonStyle(.plain)
+            .onHover { hovering = $0 }
+            .help(isPinned
+                  ? "Unpin string (back to auto detection)"
+                  : "Pin this string and play its reference note")
             .animation(.easeOut(duration: 0.15), value: state == .inTune)
+            .animation(.easeOut(duration: 0.15), value: isPinned)
+            .animation(.easeOut(duration: 0.12), value: hovering)
         }
     }
 }
