@@ -1,0 +1,29 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build DMG
+        run: ./build.sh dmg
+
+      - name: Rename DMG with version
+        run: cp build/GuitarTuner.dmg "build/GuitarTuner-${GITHUB_REF_NAME}.dmg"
+
+      - name: Create GitHub release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "build/GuitarTuner-${GITHUB_REF_NAME}.dmg" \
+            --title "Guitar Tuner $GITHUB_REF_NAME" \
+            --generate-notes

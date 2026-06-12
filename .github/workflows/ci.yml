@@ -1,0 +1,19 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build app
+        run: ./build.sh
+      - name: Upload app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GuitarTuner.app
+          path: build/GuitarTuner.app
