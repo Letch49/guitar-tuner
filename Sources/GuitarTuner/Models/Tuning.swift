@@ -2,12 +2,15 @@ import Foundation
 
 /// A musical note identified by its MIDI number.
 struct Note: Hashable, Codable {
-    let midi: Int
+    /// A4 reference frequency. Defaults to 440 Hz; updated by AppSettings.
+    static var referencePitch: Double = 440.0
 
     static let noteNames = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
+    let midi: Int
+
     var frequency: Double {
-        440.0 * pow(2.0, Double(midi - 69) / 12.0)
+        Note.referencePitch * pow(2.0, Double(midi - 69) / 12.0)
     }
 
     var name: String {

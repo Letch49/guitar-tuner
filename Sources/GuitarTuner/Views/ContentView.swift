@@ -3,6 +3,9 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject var viewModel: TunerViewModel
 
+    @State private var showSettings = false
+    @State private var gearRotation: Double = 0
+
     var body: some View {
         HStack(spacing: 0) {
             SidebarView()
@@ -58,13 +61,20 @@ struct ContentView: View {
             .frame(maxWidth: 240)
 
             Button {
-                viewModel.refreshDevices()
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.55)) {
+                    gearRotation += 120
+                }
+                showSettings = true
             } label: {
-                Image(systemName: "arrow.clockwise")
+                Image(systemName: "gearshape.fill")
+                    .rotationEffect(.degrees(gearRotation))
             }
             .buttonStyle(.borderless)
             .foregroundColor(Theme.textSecondary)
-            .help("Refresh input devices")
+            .help("Settings")
+            .sheet(isPresented: $showSettings) {
+                SettingsView()
+            }
         }
         .padding(.horizontal, 24)
         .padding(.top, 16)

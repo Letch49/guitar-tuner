@@ -2,6 +2,7 @@ import Foundation
 import SwiftUI
 import AVFoundation
 import AppKit
+import Combine
 
 @MainActor
 final class TunerViewModel: ObservableObject {
@@ -60,6 +61,8 @@ final class TunerViewModel: ObservableObject {
     private let capture = AudioCapture()
     private let tracker = PitchTracker()
     private let tonePlayer = TonePlayer()
+    private let settings = AppSettings.shared
+    private var settingsCancellables: Set<AnyCancellable> = []
 
     private let inTuneCents: Double = 5
     private let holdToConfirm: TimeInterval = 0.8
@@ -76,6 +79,41 @@ final class TunerViewModel: ObservableObject {
         let savedTuningID = UserDefaults.standard.string(forKey: Self.tuningKey)
         self.selectedTuning = savedTuningID.flatMap(Tuning.find(id:)) ?? .standard
         updateDetectorGain()
+
+        // Sync static reference pitch on launch
+        Note.referencePitch = settings.referencePitch
+
+        // Swap algorithm when user changes the setting
+        tracker.algorithm = settings.pitchAlgorithm.makeDetector()
+        settings.$pitchAlgorithm
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] choice in
+                self?.tracker.algorithm = choice.makeDetector()
+                self?.tracker.reset()
+            }
+            .store(in: &settingsCancellables)
+
+        // Update reference pitch and re-pin if active
+        settings.$referencePitch
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] newPitch in
+                guard let self else { return }
+                Note.referencePitch = newPitch
+                // Re-issue tonePlayer frequency for pinned string with new pitch
+                if let pinned = pinnedString {
+                    let freq = selectedTuning.notes[pinned].frequency
+                    tracker.currentHint = PitchHint(frequency: freq)
+                    tonePlayer.play(frequency: freq)
+                }
+                // Reset smoothing — all target frequencies changed
+                recentFrequencies.removeAll()
+                frequency = nil
+                activeString = nil
+                tunedStrings.removeAll()
+            }
+            .store(in: &settingsCancellables)
 
         tracker.onResult = { [weak self] frequency, level in
             // onResult is already dispatched to main by PitchTracker
@@ -299,7 +337,7 @@ final class TunerViewModel: ObservableObject {
     /// Returns the chromatic note (nearest semitone) for a given frequency.
     private func chromaticNote(for frequency: Double) -> Note? {
         guard frequency > 0 else { return nil }
-        let midi = Int((12 * log2(frequency / 440.0) + 69).rounded())
+        let midi = Int((12 * log2(frequency / Note.referencePitch) + 69).rounded())
         guard midi >= 0 else { return nil }
         return Note(midi: midi)
     }

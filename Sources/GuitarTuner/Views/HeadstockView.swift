@@ -1,8 +1,10 @@
 import SwiftUI
 
-/// Stylized 3+3 guitar headstock with string labels that light up while tuning.
+/// Stylized guitar headstock with string labels that light up while tuning.
+/// Supports 3+3 (symmetric) and 6-in-a-row (Fender-style) layouts via AppSettings.
 struct HeadstockView: View {
     @EnvironmentObject var viewModel: TunerViewModel
+    @ObservedObject private var settings = AppSettings.shared
 
     // Design-space constants (the whole view is drawn in a 440x470 box and scaled).
     private let designSize = CGSize(width: 440, height: 470)
@@ -11,20 +13,31 @@ struct HeadstockView: View {
     private let headBottom: CGFloat = 330
     private let headWidth: CGFloat = 190
     private let postOffsetX: CGFloat = 64
-    private let postYs: [CGFloat] = [110, 185, 260]
     private let labelOffsetX: CGFloat = 150
 
-    /// String indices (0 = low) for the left column, top to bottom.
-    private let leftStrings = [2, 1, 0]
-    /// String indices for the right column, top to bottom.
-    private let rightStrings = [3, 4, 5]
+    // 3+3: three rows on each side
+    private let postYs33: [CGFloat] = [110, 185, 260]
+    /// String indices (0 = low) for the left column (3+3), top to bottom.
+    private let leftStrings33 = [2, 1, 0]
+    /// String indices for the right column (3+3), top to bottom.
+    private let rightStrings33 = [3, 4, 5]
+
+    // 6-in-a-row (Fender/Strat style):
+    //   • peg column at cx-55 = 165 — inside the headstock shape throughout
+    //   • string 0 (low E) near the nut (bottom), string 5 (high E) near the tip (top)
+    //   • tuner keys offset left 32 px, protruding through the left edge (authentic look)
+    // Even 52 px spacing so the 44 px note circles never overlap.
+    private let postYs6: [CGFloat] = [305, 253, 201, 149, 97, 45]
+    private let postX6:  CGFloat   = 165   // cx - 55, inside the shape so keys land on wood
+    private let label6Diameter: CGFloat = 44
+    private let label6OffsetX:  CGFloat  = 140  // labels at cx-140 = 80
 
     var body: some View {
         GeometryReader { geo in
             let scale = min(geo.size.width / designSize.width, geo.size.height / designSize.height)
             ZStack {
                 neck
-                headstock
+                headstockShape
                 strings
                 posts
                 labels
@@ -33,20 +46,26 @@ struct HeadstockView: View {
             .scaleEffect(scale)
             .position(x: geo.size.width / 2, y: geo.size.height / 2)
         }
+        .animation(.easeInOut(duration: 0.25), value: settings.headstockLayout)
     }
 
     // MARK: - Geometry helpers
 
     private func postPosition(stringIndex: Int) -> CGPoint {
-        if let row = leftStrings.firstIndex(of: stringIndex) {
-            return CGPoint(x: cx - postOffsetX, y: postYs[row])
+        switch settings.headstockLayout {
+        case .threeAndThree:
+            if let row = leftStrings33.firstIndex(of: stringIndex) {
+                return CGPoint(x: cx - postOffsetX, y: postYs33[row])
+            }
+            let row = rightStrings33.firstIndex(of: stringIndex) ?? 0
+            return CGPoint(x: cx + postOffsetX, y: postYs33[row])
+        case .sixInARow:
+            return CGPoint(x: postX6, y: postYs6[stringIndex])
         }
-        let row = rightStrings.firstIndex(of: stringIndex) ?? 0
-        return CGPoint(x: cx + postOffsetX, y: postYs[row])
     }
 
     private func nutX(stringIndex: Int) -> CGFloat {
-        // 6 slots across the nut, low string leftmost.
+        // 6 evenly-spaced nut slots centred on cx (same for both layouts).
         cx - 37.5 + CGFloat(stringIndex) * 15
     }
 
@@ -87,22 +106,31 @@ struct HeadstockView: View {
         }
     }
 
-    private var headstock: some View {
-        HeadstockShape()
-            .fill(
-                LinearGradient(
-                    colors: [Color(red: 0.45, green: 0.27, blue: 0.15),
-                             Color(red: 0.32, green: 0.18, blue: 0.10)],
-                    startPoint: .topLeading, endPoint: .bottomTrailing
-                )
-            )
-            .overlay(
-                HeadstockShape()
-                    .stroke(Color.black.opacity(0.5), lineWidth: 2)
-            )
-            .frame(width: headWidth, height: headBottom - headTop)
-            .position(x: cx, y: (headTop + headBottom) / 2)
-            .shadow(color: .black.opacity(0.5), radius: 14, y: 6)
+    @ViewBuilder
+    private var headstockShape: some View {
+        let wood = LinearGradient(
+            colors: [Color(red: 0.45, green: 0.27, blue: 0.15),
+                     Color(red: 0.32, green: 0.18, blue: 0.10)],
+            startPoint: .topLeading, endPoint: .bottomTrailing
+        )
+        if settings.headstockLayout == .threeAndThree {
+            ThreeThreeHeadstockShape()
+                .fill(wood)
+                .overlay(ThreeThreeHeadstockShape().stroke(Color.black.opacity(0.5), lineWidth: 2))
+                .frame(width: headWidth, height: headBottom - headTop)
+                .position(x: cx, y: (headTop + headBottom) / 2)
+                .shadow(color: .black.opacity(0.5), radius: 14, y: 6)
+        } else {
+            // 6-in-a-row: frame spans x=[110,290] y=[20,330], size 180×310,
+            // centred at (200, 175).  The shape's normalised bezier matches the
+            // Strat S-curve from the Python mock exactly.
+            SixInARowHeadstockShape()
+                .fill(wood)
+                .overlay(SixInARowHeadstockShape().stroke(Color.black.opacity(0.5), lineWidth: 2))
+                .frame(width: 180, height: 310)
+                .position(x: 200, y: 175)
+                .shadow(color: .black.opacity(0.5), radius: 14, y: 6)
+        }
     }
 
     private var strings: some View {
@@ -166,19 +194,31 @@ struct HeadstockView: View {
         }
     }
 
+    private func labelX(stringIndex: Int) -> CGFloat {
+        switch settings.headstockLayout {
+        case .threeAndThree:
+            return postPosition(stringIndex: stringIndex).x < cx ? cx - labelOffsetX : cx + labelOffsetX
+        case .sixInARow:
+            return cx - label6OffsetX
+        }
+    }
+
+    private var labelDiameter: CGFloat {
+        settings.headstockLayout == .sixInARow ? label6Diameter : 58
+    }
+
     private var labels: some View {
         ForEach(0..<6, id: \.self) { index in
             let post = postPosition(stringIndex: index)
-            let isLeft = post.x < cx
-            let labelCenter = CGPoint(x: isLeft ? cx - labelOffsetX : cx + labelOffsetX, y: post.y)
             StringLabel(
                 note: viewModel.selectedTuning.notes[index],
                 state: stringState(index),
-                isPinned: viewModel.pinnedString == index
+                isPinned: viewModel.pinnedString == index,
+                diameter: labelDiameter
             ) {
                 viewModel.toggleStringPin(index)
             }
-            .position(labelCenter)
+            .position(CGPoint(x: labelX(stringIndex: index), y: post.y))
         }
     }
 
@@ -186,6 +226,7 @@ struct HeadstockView: View {
         let note: Note
         let state: StringState
         let isPinned: Bool
+        let diameter: CGFloat
         let action: () -> Void
 
         @State private var hovering = false
@@ -224,20 +265,20 @@ struct HeadstockView: View {
                         .strokeBorder(ringColor, lineWidth: isPinned ? 3 : 2)
                     VStack(spacing: -2) {
                         Text(note.name)
-                            .font(.system(size: 20, weight: .semibold, design: .rounded))
+                            .font(.system(size: diameter * 0.345, weight: .semibold, design: .rounded))
                             .foregroundColor(textColor)
                         if state == .tuned {
                             Image(systemName: "checkmark")
-                                .font(.system(size: 9, weight: .bold))
+                                .font(.system(size: diameter * 0.155, weight: .bold))
                                 .foregroundColor(textColor.opacity(0.7))
                         } else if isPinned {
                             Image(systemName: "pin.fill")
-                                .font(.system(size: 8, weight: .bold))
+                                .font(.system(size: diameter * 0.14, weight: .bold))
                                 .foregroundColor(textColor.opacity(0.7))
                         }
                     }
                 }
-                .frame(width: 58, height: 58)
+                .frame(width: diameter, height: diameter)
                 .shadow(color: isPinned ? Theme.accent.opacity(0.55) : .clear, radius: isPinned ? 9 : 0)
                 .scaleEffect(hovering && !isPinned ? 1.06 : 1.0)
                 .contentShape(Circle())
@@ -254,8 +295,8 @@ struct HeadstockView: View {
     }
 }
 
-/// Symmetric 3+3 headstock outline drawn in a unit-ish rect.
-private struct HeadstockShape: Shape {
+/// Symmetric 3+3 headstock outline.
+private struct ThreeThreeHeadstockShape: Shape {
     func path(in rect: CGRect) -> Path {
         let w = rect.width
         let h = rect.height
@@ -265,15 +306,52 @@ private struct HeadstockShape: Shape {
 
         var path = Path()
         path.move(to: point(0.30, 1.0))
-        // Left side: flare out, then taper to the top.
         path.addCurve(to: point(0.06, 0.42), control1: point(0.18, 0.92), control2: point(0.05, 0.66))
         path.addCurve(to: point(0.30, 0.04), control1: point(0.07, 0.20), control2: point(0.16, 0.06))
-        // Top with a gentle dip in the middle.
         path.addCurve(to: point(0.50, 0.075), control1: point(0.40, 0.02), control2: point(0.45, 0.075))
         path.addCurve(to: point(0.70, 0.04), control1: point(0.55, 0.075), control2: point(0.60, 0.02))
-        // Right side mirrored.
         path.addCurve(to: point(0.94, 0.42), control1: point(0.84, 0.06), control2: point(0.93, 0.20))
         path.addCurve(to: point(0.70, 1.0), control1: point(0.95, 0.66), control2: point(0.82, 0.92))
+        path.closeSubpath()
+        return path
+    }
+}
+
+/// Fender/Strat-style 6-in-a-row headstock outline.
+/// Frame: 180 × 310 pt, positioned at (200, 175) in the 440×470 design space.
+/// That places the frame x-range [110, 290], y-range [20, 330].
+///
+/// Normalised coordinates are derived from the Python mock that matches a real
+/// guitar headstock photo:
+///   • right side is nearly straight (slight flare)
+///   • top is a gentle dome
+///   • left side has the characteristic Strat S-curve: bows outward, then
+///     curves inward back to the nut corner
+private struct SixInARowHeadstockShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        let w = rect.width, h = rect.height
+        func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+            CGPoint(x: rect.minX + x * w, y: rect.minY + y * h)
+        }
+        var path = Path()
+        // Nut-right corner
+        path.move(to: p(0.917, 1.0))
+        // Right side (treble) up — long and nearly straight, slight taper near the top
+        path.addCurve(to: p(0.822, 0.058),
+                      control1: p(0.956, 0.677),
+                      control2: p(0.967, 0.323))
+        // Top dome, right → left
+        path.addCurve(to: p(0.011, 0.161),
+                      control1: p(0.639, 0.013),
+                      control2: p(0.306, 0.019))
+        // Left side (bass / peg side) down — stays wide so keys land on wood
+        path.addCurve(to: p(0.044, 0.903),
+                      control1: p(-0.022, 0.419),
+                      control2: p(-0.011, 0.677))
+        // Taper in to the nut-left corner below the lowest peg
+        path.addCurve(to: p(0.306, 1.0),
+                      control1: p(0.167, 0.974),
+                      control2: p(0.222, 1.0))
         path.closeSubpath()
         return path
     }

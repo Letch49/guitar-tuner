@@ -15,8 +15,11 @@ final class PitchTracker {
 
     // MARK: - Configuration (main-thread writes, capture-queue reads)
 
-    /// Active algorithm.
-    var algorithm: any PitchDetectionAlgorithm
+    /// Active algorithm. Swapping is safe from the main thread;
+    /// the capture queue reads the lock-protected `_algorithm` copy.
+    var algorithm: any PitchDetectionAlgorithm = MPMDetector() {
+        didSet { lock.lock(); _algorithm = algorithm; lock.unlock() }
+    }
 
     /// Pre-gain applied before the algorithm. Auto-adjusted by TunerViewModel
     /// for low tunings (low strings are quieter through a mic).
@@ -39,6 +42,7 @@ final class PitchTracker {
 
     // Lock-protected copies read on the capture queue
     private let lock = NSLock()
+    private var _algorithm: any PitchDetectionAlgorithm = MPMDetector()
     private var _gain: Float = 3.0
     private var _hint: PitchHint?
 
@@ -52,8 +56,7 @@ final class PitchTracker {
 
     // MARK: - Init
 
-    init(algorithm: any PitchDetectionAlgorithm = MPMDetector()) {
-        self.algorithm = algorithm
+    init() {
         self.window  = [Float](repeating: 0, count: windowSize)
         self.boosted = [Float](repeating: 0, count: 512)   // grows on first large buffer
     }
@@ -62,7 +65,7 @@ final class PitchTracker {
 
     func reset() {
         buffer.removeAll(keepingCapacity: true)
-        algorithm.reset()
+        lock.lock(); _algorithm.reset(); lock.unlock()
     }
 
     /// Feed raw audio from `AudioCapture`. Called on the capture queue.
@@ -70,11 +73,12 @@ final class PitchTracker {
         if sampleRate != currentSampleRate {
             currentSampleRate = sampleRate
             buffer.removeAll(keepingCapacity: true)
-            algorithm.reset()
+            lock.lock(); _algorithm.reset(); lock.unlock()
         }
 
         // Snapshot shared state atomically
         lock.lock()
+        var algo = _algorithm
         let g    = _gain
         let hint = _hint
         lock.unlock()
@@ -109,7 +113,7 @@ final class PitchTracker {
                 continue
             }
 
-            let result = algorithm.process(samples: window, sampleRate: sampleRate, hint: hint)
+            let result = algo.process(samples: window, sampleRate: sampleRate, hint: hint)
             let freq: Double? = result.map { $0.frequency }
 
             DispatchQueue.main.async { [weak self] in self?.onResult?(freq, rms) }
