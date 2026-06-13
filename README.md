@@ -3,9 +3,19 @@
 [![CI](https://github.com/Letch49/guitar-tuner/actions/workflows/ci.yml/badge.svg)](https://github.com/Letch49/guitar-tuner/actions/workflows/ci.yml)
 [![Security Scan](https://github.com/Letch49/guitar-tuner/actions/workflows/security.yml/badge.svg)](https://github.com/Letch49/guitar-tuner/actions/workflows/security.yml)
 
-Native guitar tuner for macOS. Pluck a string — the app detects which string you’re playing and shows a needle for how far off you are (in cents).
+Native guitar tuner for macOS. Pluck a string — the app detects which string you're playing and shows a needle for how far off you are (in cents).
 
-Built with Swift + SwiftUI. Pitch detection uses the YIN algorithm (no external dependencies).
+Built with Swift + SwiftUI. Pitch detection uses the PTrack algorithm (a Swift port of the Csound opcode by Victor Lazzarini / Miller Puckette, via [ZenTuner](https://github.com/jpsim/ZenTuner)).
+
+## Features
+
+- **16 tunings** — Standard, Drop, Modal, and Open tunings
+- **Visual needle** with a ±5 cent green zone; hold steady and the string is marked as in tune
+- **Pin a string** — tap any string on the headstock to lock tuning to it and hear a reference tone; uses harmonic folding so low strings (E2, C#2…) are detected even when the fundamental is quiet
+- **Shows actual note** — if the detected pitch doesn't match the target string, the app shows what note you're actually playing
+- **Menu bar mode** — a compact popover lives in the macOS menu bar; the status item shows the detected note in real time so you can tune without opening the main window
+- **Auto sensitivity** — gain is scaled automatically for lower tunings (Drop B, Drop A, etc.) to compensate for reduced acoustic output of low strings
+- **Audio interface support** — tested with Focusrite Scarlett Solo (4th Gen)
 
 ## Demo
 
@@ -34,7 +44,7 @@ Open the DMG and drag Guitar Tuner into Applications. The app is ad-hoc signed, 
 | Source | Status |
 |--------|--------|
 | **Audio interface (Focusrite)** | Tested and works well. Focusrite Scarlett Solo (4th Gen) was the only interface used during development — other brands/models are untested. |
-| **Built-in Mac microphone** | Works, but less reliable than a direct input. Low strings and quiet signals are harder to detect. |
+| **Built-in Mac microphone** | Works. For low strings (E2 and below) pin the string on the headstock to improve detection. |
 | **Bluetooth / Continuity mic (e.g. iPhone)** | Untested; may work with the same limitations as the built-in mic. |
 
 For serious tuning, a direct guitar → interface connection is strongly recommended.
@@ -91,7 +101,7 @@ Requires macOS 13+ and Xcode Command Line Tools (`xcode-select --install`).
 
 ## Release
 
-Releases are published automatically via GitHub Actions. Push a tag like `v1.0.0` — CI builds the DMG and attaches it to the release.
+Releases are published automatically via GitHub Actions. Push a tag like `v1.0.0` — CI builds the DMG, runs a VirusTotal security scan, and attaches the DMG to the release.
 
 ```bash
 git tag v1.0.0 && git push origin v1.0.0

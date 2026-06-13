@@ -14,6 +14,7 @@ final class TunerViewModel: ObservableObject {
             tunedStrings.removeAll()
             pinnedString = nil
             UserDefaults.standard.set(selectedTuning.id, forKey: Self.tuningKey)
+            updateDetectorGain()
         }
     }
 
@@ -44,6 +45,10 @@ final class TunerViewModel: ObservableObject {
     @Published var permissionDenied = false
     @Published var captureErrorMessage: String?
     @Published var inputLevel: Float = 0
+    /// The actual chromatic note closest to the detected frequency,
+    /// regardless of the current tuning. Useful for showing "you're playing C#"
+    /// even when the target string is E.
+    @Published var actualNote: Note?
 
     var isInTune: Bool { frequency != nil && abs(cents) <= inTuneCents }
 
@@ -61,12 +66,17 @@ final class TunerViewModel: ObservableObject {
 
     private var recentFrequencies: [Double] = []
     private var lastDetectionAt: Date = .distantPast
+    // Debounce: only add a reading to recentFrequencies once per PTrack hop
+    // (~90–100 ms). This prevents one PTrack window from satisfying the
+    // consistency check by itself (onResult fires on every audio buffer).
+    private var lastFrequencyAddedAt: Date = .distantPast
     private var inTuneSince: Date?
     private var silenceTimer: Timer?
 
     init() {
         let savedTuningID = UserDefaults.standard.string(forKey: Self.tuningKey)
         self.selectedTuning = savedTuningID.flatMap(Tuning.find(id:)) ?? .standard
+        updateDetectorGain()
 
         tracker.onResult = { [weak self] frequency, level in
             DispatchQueue.main.async {
@@ -147,6 +157,7 @@ final class TunerViewModel: ObservableObject {
         } else {
             pinnedString = index
             recentFrequencies.removeAll()
+            lastFrequencyAddedAt = .distantPast
             tonePlayer.play(frequency: selectedTuning.notes[index].frequency)
         }
     }
@@ -174,20 +185,51 @@ final class TunerViewModel: ObservableObject {
         inputLevel = level
 
         guard let rawFrequency else { return }
-        lastDetectionAt = Date()
+        let now = Date()
+        lastDetectionAt = now
 
-        // If pitch jumped far away (different string plucked), restart smoothing.
-        if let median = median(of: recentFrequencies),
-           abs(1200 * log2(rawFrequency / median)) > 80 {
-            recentFrequencies.removeAll()
+        // When a string is pinned, fold detected harmonics down to the target
+        // octave. Low strings (E2, C#2…) often produce a stronger 2nd or 3rd
+        // harmonic than the fundamental, so PTrack may report 2×/3×/4× the
+        // target. If the folded frequency is within 50 cents of the target we
+        // accept it as a valid reading for that string.
+        var effectiveFrequency = rawFrequency
+        if let pinned = pinnedString {
+            let target = selectedTuning.notes[pinned].frequency
+            for n in 2...4 {
+                let folded = rawFrequency / Double(n)
+                if abs(1200 * log2(folded / target)) < 50 {
+                    effectiveFrequency = folded
+                    break
+                }
+            }
         }
-        recentFrequencies.append(rawFrequency)
-        if recentFrequencies.count > 5 {
-            recentFrequencies.removeFirst()
+
+        // Only add one reading per PTrack hop (~90 ms) so that the consistency
+        // check below requires genuinely separate analysis windows, not just
+        // repeated reports of the same window on consecutive audio buffers.
+        let hopInterval: TimeInterval = 0.09
+        if now.timeIntervalSince(lastFrequencyAddedAt) >= hopInterval {
+            lastFrequencyAddedAt = now
+
+            // If pitch jumped far away (different string plucked), restart smoothing.
+            // Skip this check when pinned — we already know the target string.
+            if pinnedString == nil,
+               let median = median(of: recentFrequencies),
+               abs(1200 * log2(effectiveFrequency / median)) > 80 {
+                recentFrequencies.removeAll()
+            }
+            recentFrequencies.append(effectiveFrequency)
+            if recentFrequencies.count > 5 {
+                recentFrequencies.removeFirst()
+            }
         }
-        // Require several consistent readings before showing anything,
-        // so short noises and phantom detections don't move the needle.
-        guard recentFrequencies.count >= 3, let smoothed = median(of: recentFrequencies) else { return }
+
+        // Pinned: only need 2 consistent readings (we know what we're looking for).
+        // Free: require 4 readings to filter spurious detections.
+        let requiredReadings = pinnedString != nil ? 2 : 4
+        guard recentFrequencies.count >= requiredReadings,
+              let smoothed = median(of: recentFrequencies) else { return }
 
         let notes = selectedTuning.notes
         let bestIndex: Int
@@ -216,6 +258,7 @@ final class TunerViewModel: ObservableObject {
         }
         self.frequency = smoothed
         self.activeString = bestIndex
+        self.actualNote = chromaticNote(for: smoothed)
 
         if abs(cents) <= inTuneCents {
             if let since = inTuneSince {
@@ -236,10 +279,28 @@ final class TunerViewModel: ObservableObject {
         if Date().timeIntervalSince(lastDetectionAt) > 0.7 {
             frequency = nil
             activeString = nil
+            actualNote = nil
             cents = 0
             inTuneSince = nil
             recentFrequencies.removeAll()
         }
+    }
+
+    /// Scale pre-gain based on the lowest string in the selected tuning.
+    /// Lower strings are quieter acoustically, so we boost the signal.
+    private func updateDetectorGain() {
+        let lowestMidi = selectedTuning.notes.map(\.midi).min() ?? 40
+        // Reference: E2 = midi 40 → gain 3.0. Each semitone lower increases by 2^(1/12).
+        let gain = Float(min(10.0, 3.0 * pow(2.0, Double(40 - lowestMidi) / 12.0)))
+        tracker.gain = gain
+    }
+
+    /// Returns the chromatic note (nearest semitone) for a given frequency.
+    private func chromaticNote(for frequency: Double) -> Note? {
+        guard frequency > 0 else { return nil }
+        let midi = Int((12 * log2(frequency / 440.0) + 69).rounded())
+        guard midi >= 0 else { return nil }
+        return Note(midi: midi)
     }
 
     private func median(of values: [Double]) -> Double? {

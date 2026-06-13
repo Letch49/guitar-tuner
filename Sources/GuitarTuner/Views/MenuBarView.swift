@@ -35,6 +35,16 @@ struct MenuBarView: View {
                      : String(format: "%+.0f cents", viewModel.cents))
                     .font(.system(size: 12, weight: .semibold, design: .monospaced))
                     .foregroundColor(statusColor)
+
+                if let actual = viewModel.actualNote,
+                   let idx = viewModel.activeString,
+                   !viewModel.isInTune,
+                   abs(viewModel.cents) > 25,
+                   actual.name != viewModel.selectedTuning.notes[idx].name {
+                    Text("playing \(actual.display)")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(Color(white: 0.5))
+                }
             } else {
                 Text("—")
                     .font(.system(size: 52, weight: .bold, design: .rounded))
@@ -72,6 +82,12 @@ struct MenuBarView: View {
                         .offset(x: offset > 0 ? center - w/2 + abs(offset)/2
                                               : center - w/2 - abs(offset)/2 + abs(offset))
                 }
+
+                // Tolerance zone (±5 cents = ±10% of half-width)
+                let zoneWidth = w * (5.0 / 50.0)
+                Capsule()
+                    .fill(Theme.accent.opacity(0.25))
+                    .frame(width: zoneWidth * 2, height: 8)
 
                 // Center tick
                 Rectangle()
@@ -129,8 +145,7 @@ struct MenuBarLabel: View {
     @EnvironmentObject var viewModel: TunerViewModel
 
     var body: some View {
-        if let idx = viewModel.activeString, viewModel.frequency != nil {
-            let note = viewModel.selectedTuning.notes[idx]
+        if let note = viewModel.actualNote {
             Text("\(note.name)\(note.octave)")
                 .font(.system(size: 12, weight: .semibold, design: .monospaced))
         } else {

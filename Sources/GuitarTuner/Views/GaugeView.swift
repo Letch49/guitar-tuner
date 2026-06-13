@@ -21,12 +21,38 @@ struct GaugeView: View {
     var body: some View {
         VStack(spacing: 2) {
             ZStack(alignment: .bottom) {
+                toleranceArc
                 ticks
                 needle
             }
             .frame(width: 340, height: 150)
 
             noteReadout
+        }
+    }
+
+    // Green arc showing the ±5 cent "in tune" zone.
+    private var toleranceArc: some View {
+        Canvas { context, size in
+            let pivot = CGPoint(x: size.width / 2, y: size.height)
+            let rOuter: CGFloat = size.height - 12
+            let arcThickness: CGFloat = 16
+            let rMid = rOuter - arcThickness / 2
+            let halfZone = (5.0 / 50.0 * maxAngle) * .pi / 180
+
+            var path = Path()
+            path.addArc(
+                center: pivot,
+                radius: rMid,
+                startAngle: .radians(-.pi / 2 - halfZone),
+                endAngle: .radians(-.pi / 2 + halfZone),
+                clockwise: false
+            )
+            context.stroke(
+                path,
+                with: .color(Theme.accent.opacity(0.25)),
+                style: StrokeStyle(lineWidth: arcThickness, lineCap: .round)
+            )
         }
     }
 
@@ -109,6 +135,17 @@ struct GaugeView: View {
                          : String(format: "%+.0f cents", viewModel.cents))
                         .font(.system(size: 12, weight: .semibold, design: .monospaced))
                         .foregroundColor(statusColor)
+                }
+
+                // Show actual detected note when it differs from the target string.
+                if let actual = viewModel.actualNote,
+                   let idx = viewModel.activeString,
+                   !viewModel.isInTune,
+                   abs(viewModel.cents) > 25,
+                   actual.name != viewModel.selectedTuning.notes[idx].name {
+                    Text("playing \(actual.display)")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundColor(Theme.textSecondary)
                 }
             } else {
                 Text("—")
