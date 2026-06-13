@@ -16,5 +16,15 @@ struct GuitarTunerApp: App {
                 }
         }
         .defaultSize(width: 1100, height: 720)
+
+        MenuBarExtra {
+            MenuBarView()
+                .environmentObject(viewModel)
+                .preferredColorScheme(.dark)
+        } label: {
+            MenuBarLabel()
+                .environmentObject(viewModel)
+        }
+        .menuBarExtraStyle(.window)
     }
 }
