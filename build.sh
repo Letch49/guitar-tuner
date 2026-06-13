@@ -18,6 +18,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp ".build/release/GuitarTuner" "$APP/Contents/MacOS/GuitarTuner"
 cp "Resources/Info.plist" "$APP/Contents/Info.plist"
 cp "Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
+cp "Resources/MenuBarIcon@2x.png" "$APP/Contents/Resources/MenuBarIcon@2x.png"
 
 echo "==> Signing (ad-hoc)..."
 codesign --force --sign - "$APP"

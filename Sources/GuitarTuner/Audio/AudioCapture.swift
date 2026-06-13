@@ -12,8 +12,10 @@ import Accelerate
 final class AudioCapture: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
     private var session: AVCaptureSession?
     private let sampleQueue = DispatchQueue(label: "guitartuner.capture")
+    // A dedicated queue for session start/stop — Apple explicitly warns that
+    // calling startRunning() / stopRunning() on the main thread can crash.
+    private let sessionQueue = DispatchQueue(label: "guitartuner.session")
     private var observers: [NSObjectProtocol] = []
-    private var bufferCount = 0
 
     /// Called on the capture queue with mono samples and the sample rate.
     var onSamples: (([Float], Double) -> Void)?
@@ -33,18 +35,14 @@ final class AudioCapture: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate
     }
 
     func start(deviceUID: String?) throws {
-        stop()
+        // Build the session on the calling thread (configuration is fast),
+        // but start/stop running must happen off the main thread.
+        stopSync()
 
-        // AVCaptureDevice.uniqueID matches the Core Audio device UID.
         let device: AVCaptureDevice? = deviceUID
             .flatMap { AVCaptureDevice(uniqueID: $0) }
             ?? .default(for: .audio)
-        DebugLog.shared.line(
-            "capture start: requested uid=\(deviceUID ?? "<default>") "
-            + "resolved=\(device?.localizedName ?? "nil") (\(device?.uniqueID ?? "-"))"
-        )
         guard let device else { throw CaptureError.deviceNotFound }
-        bufferCount = 0
 
         let session = AVCaptureSession()
         session.beginConfiguration()
@@ -54,7 +52,6 @@ final class AudioCapture: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate
         session.addInput(input)
 
         let output = AVCaptureAudioDataOutput()
-        // Request float32 interleaved PCM at the device's native rate and channel count.
         output.audioSettings = [
             AVFormatIDKey: kAudioFormatLinearPCM,
             AVLinearPCMBitDepthKey: 32,
@@ -66,33 +63,44 @@ final class AudioCapture: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate
         session.addOutput(output)
 
         session.commitConfiguration()
-        session.startRunning()
         self.session = session
 
-        DebugLog.shared.line("session running=\(session.isRunning)")
-
-        let center = NotificationCenter.default
-        observers = [
-            center.addObserver(
-                forName: .AVCaptureSessionRuntimeError, object: session, queue: nil
-            ) { [weak self] note in
-                let error = note.userInfo?[AVCaptureSessionErrorKey] ?? "unknown"
-                DebugLog.shared.line("session runtime error: \(error)")
-                self?.onConfigurationChange?()
-            },
-            center.addObserver(
-                forName: AVCaptureDevice.wasDisconnectedNotification, object: nil, queue: nil
-            ) { [weak self] _ in
-                self?.onConfigurationChange?()
-            },
-        ]
+        // startRunning() blocks until the session is ready — must not run on
+        // the main thread or it will cause a watchdog crash.
+        sessionQueue.async { [weak self] in
+            session.startRunning()
+            self?.registerSessionObservers(for: session)
+        }
     }
 
     func stop() {
         observers.forEach(NotificationCenter.default.removeObserver)
         observers = []
-        session?.stopRunning()
+        let s = session
         session = nil
+        sessionQueue.async { s?.stopRunning() }
+    }
+
+    // Synchronous stop used before reconfiguring — waits for the session queue
+    // to finish so we don't overlap start/stop calls.
+    private func stopSync() {
+        observers.forEach(NotificationCenter.default.removeObserver)
+        observers = []
+        let s = session
+        session = nil
+        sessionQueue.sync { s?.stopRunning() }
+    }
+
+    private func registerSessionObservers(for session: AVCaptureSession) {
+        let center = NotificationCenter.default
+        observers = [
+            center.addObserver(
+                forName: .AVCaptureSessionRuntimeError, object: session, queue: nil
+            ) { [weak self] _ in self?.onConfigurationChange?() },
+            center.addObserver(
+                forName: AVCaptureDevice.wasDisconnectedNotification, object: nil, queue: nil
+            ) { [weak self] _ in self?.onConfigurationChange?() },
+        ]
     }
 
     // MARK: - AVCaptureAudioDataOutputSampleBufferDelegate
@@ -140,16 +148,6 @@ final class AudioCapture: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate
         }
 
         guard !mono.isEmpty else { return }
-
-        bufferCount += 1
-        if bufferCount == 1 || bufferCount % 200 == 0 {
-            var rms: Float = 0
-            vDSP_rmsqv(mono, 1, &rms, vDSP_Length(mono.count))
-            DebugLog.shared.line(String(
-                format: "buffer #%d: sr=%.0f ch=%d frames=%d rms=%.5f",
-                bufferCount, sampleRate, channels, frames, rms
-            ))
-        }
         onSamples?(mono, sampleRate)
     }
 }

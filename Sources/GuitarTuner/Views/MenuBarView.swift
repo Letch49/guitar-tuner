@@ -145,12 +145,32 @@ struct MenuBarLabel: View {
     @EnvironmentObject var viewModel: TunerViewModel
 
     var body: some View {
-        if let note = viewModel.actualNote {
-            Text("\(note.name)\(note.octave)")
-                .font(.system(size: 12, weight: .semibold, design: .monospaced))
-        } else {
-            Image(systemName: "guitars")
+        HStack(spacing: 3) {
+            // NSImage.size is already 18pt — no extra SwiftUI sizing needed
+            Image(nsImage: menuBarIcon)
+                .renderingMode(.template)
+            if let note = viewModel.actualNote {
+                Text("\(note.name)\(note.octave)")
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+            }
         }
+    }
+
+    private var menuBarIcon: NSImage {
+        // Apple HIG: menu bar extras use 18×18pt template images.
+        // Load the @2x asset (36 physical pixels) and declare its logical size as 18pt —
+        // AppKit then applies the correct 2x scale on Retina displays automatically.
+        let url = Bundle.main.url(forResource: "MenuBarIcon@2x", withExtension: "png")
+            ?? Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/MenuBarIcon@2x.png")
+        let img: NSImage
+        if let loaded = NSImage(contentsOf: url) {
+            img = loaded
+        } else {
+            img = NSImage(systemSymbolName: "guitars", accessibilityDescription: nil)!
+        }
+        img.size = NSSize(width: 18, height: 18)
+        img.isTemplate = true
+        return img
     }
 }
 

@@ -5,7 +5,7 @@
 
 Native guitar tuner for macOS. Pluck a string — the app detects which string you're playing and shows a needle for how far off you are (in cents).
 
-Built with Swift + SwiftUI. Pitch detection uses the PTrack algorithm (a Swift port of the Csound opcode by Victor Lazzarini / Miller Puckette, via [ZenTuner](https://github.com/jpsim/ZenTuner)).
+Built with Swift + SwiftUI. Pitch detection uses the McLeod Pitch Method (MPM) — a time-domain algorithm based on the Normalized Square Difference Function with parabolic interpolation and string-aware hint detection. YIN/CMNDF is available as a drop-in alternative.
 
 ## Features
 
@@ -48,6 +48,15 @@ Open the DMG and drag Guitar Tuner into Applications. The app is ad-hoc signed, 
 | **Bluetooth / Continuity mic (e.g. iPhone)** | Untested; may work with the same limitations as the built-in mic. |
 
 For serious tuning, a direct guitar → interface connection is strongly recommended.
+
+### Electric guitar + microphone
+
+Tested on an electric guitar played **without an amplifier** (acoustic string output only):
+
+- **With audio interface** — all strings detected reliably, tuning works great.
+- **Without interface (built-in mic)** — strings 1–5 work well. String 6 (lowest E/D/C#…) is poorly detected due to the weak acoustic output of an unplugged electric guitar. This is expected behaviour — the fundamental is simply too quiet for the microphone to pick up cleanly.
+
+If you have ideas on how to improve low-string detection without an interface, PRs are welcome.
 
 ## Tunings
 

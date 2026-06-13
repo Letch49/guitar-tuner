@@ -274,6 +274,7 @@ private extension ZenPTrack {
         for i in 0..<Int(maxbin) { histogram[i] = 0 }
 
         for peak in peaklist.prefix(npeak) {
+            guard peak.pfreq > 0, peak.pfreq.isFinite else { continue }
             let pit = BPEROOVERLOG2 * log(peak.pfreq) - 96
             let binbandwidth = FACTORTOBINS * peak.pwidth / peak.pfreq
             let putbandwidth = binbandwidth < 2 ? 2 : binbandwidth
@@ -282,7 +283,7 @@ private extension ZenPTrack {
 
             for (index, onset) in partialonset.enumerated() {
                 let bin = pit - onset
-                guard bin < Double(maxbin) else { continue }
+                guard bin.isFinite, bin < Double(maxbin) else { continue }
                 let firstbin = Int(bin + 0.5 - 0.5 * putbandwidth)
                 if (firstbin < -BINGUARD) {
                     continue
@@ -308,6 +309,9 @@ private extension ZenPTrack {
 
         for peak in peaklist.prefix(npeak) {
             let fpnum = peak.pfreq / putfreq
+            // Guard against NaN / Inf that can appear on device-switch or
+            // first buffer after capture restart (Int() traps on non-finite).
+            guard fpnum.isFinite else { continue }
             let pnum = Int(fpnum + 0.5)
 
             if pnum > 16 || pnum < 1 { continue }

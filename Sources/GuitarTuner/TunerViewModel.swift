@@ -66,9 +66,8 @@ final class TunerViewModel: ObservableObject {
 
     private var recentFrequencies: [Double] = []
     private var lastDetectionAt: Date = .distantPast
-    // Debounce: only add a reading to recentFrequencies once per PTrack hop
-    // (~90–100 ms). This prevents one PTrack window from satisfying the
-    // consistency check by itself (onResult fires on every audio buffer).
+    // Debounce: only add one reading per MPM hop (~46 ms at 50% overlap / 4096 window)
+    // so the consistency check requires genuinely separate analysis windows.
     private var lastFrequencyAddedAt: Date = .distantPast
     private var inTuneSince: Date?
     private var silenceTimer: Timer?
@@ -79,9 +78,8 @@ final class TunerViewModel: ObservableObject {
         updateDetectorGain()
 
         tracker.onResult = { [weak self] frequency, level in
-            DispatchQueue.main.async {
-                self?.handleDetection(frequency: frequency, level: level)
-            }
+            // onResult is already dispatched to main by PitchTracker
+            self?.handleDetection(frequency: frequency, level: level)
         }
         capture.onSamples = { [weak self] samples, sampleRate in
             self?.tracker.append(samples, sampleRate: sampleRate)
@@ -154,11 +152,14 @@ final class TunerViewModel: ObservableObject {
         if pinnedString == index {
             pinnedString = nil
             tonePlayer.stop()
+            tracker.currentHint = nil
         } else {
             pinnedString = index
             recentFrequencies.removeAll()
             lastFrequencyAddedAt = .distantPast
-            tonePlayer.play(frequency: selectedTuning.notes[index].frequency)
+            let freq = selectedTuning.notes[index].frequency
+            tracker.currentHint = PitchHint(frequency: freq)
+            tonePlayer.play(frequency: freq)
         }
     }
 
@@ -188,27 +189,25 @@ final class TunerViewModel: ObservableObject {
         let now = Date()
         lastDetectionAt = now
 
-        // When a string is pinned, fold detected harmonics down to the target
-        // octave. Low strings (E2, C#2…) often produce a stronger 2nd or 3rd
-        // harmonic than the fundamental, so PTrack may report 2×/3×/4× the
-        // target. If the folded frequency is within 50 cents of the target we
-        // accept it as a valid reading for that string.
+        // MPM + hint already constrains the search to the pinned string's range,
+        // so harmonic folding is generally not needed. We keep a light fold as a
+        // safety net for edge cases (e.g. very loud 2nd harmonic).
         var effectiveFrequency = rawFrequency
         if let pinned = pinnedString {
             let target = selectedTuning.notes[pinned].frequency
             for n in 2...4 {
                 let folded = rawFrequency / Double(n)
-                if abs(1200 * log2(folded / target)) < 50 {
+                if abs(1200 * log2(folded / target)) < 30 {
                     effectiveFrequency = folded
                     break
                 }
             }
         }
 
-        // Only add one reading per PTrack hop (~90 ms) so that the consistency
-        // check below requires genuinely separate analysis windows, not just
-        // repeated reports of the same window on consecutive audio buffers.
-        let hopInterval: TimeInterval = 0.09
+        // MPM fires once per hop (~46 ms at 50% overlap / 4096 window).
+        // Keep the debounce guard to prevent a single window from satisfying
+        // the consistency check multiple times if callbacks pile up.
+        let hopInterval: TimeInterval = 0.046
         if now.timeIntervalSince(lastFrequencyAddedAt) >= hopInterval {
             lastFrequencyAddedAt = now
 
@@ -293,6 +292,8 @@ final class TunerViewModel: ObservableObject {
         // Reference: E2 = midi 40 → gain 3.0. Each semitone lower increases by 2^(1/12).
         let gain = Float(min(10.0, 3.0 * pow(2.0, Double(40 - lowestMidi) / 12.0)))
         tracker.gain = gain
+        // Clear hint when tuning changes (pinned string is also cleared)
+        tracker.currentHint = nil
     }
 
     /// Returns the chromatic note (nearest semitone) for a given frequency.
