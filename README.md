@@ -3,33 +3,38 @@
 [![CI](https://github.com/Letch49/guitar-tuner/actions/workflows/ci.yml/badge.svg)](https://github.com/Letch49/guitar-tuner/actions/workflows/ci.yml)
 [![Security Scan](https://github.com/Letch49/guitar-tuner/actions/workflows/security.yml/badge.svg)](https://github.com/Letch49/guitar-tuner/actions/workflows/security.yml)
 
-Native guitar tuner for macOS. Pluck a string — the app detects which string you're playing and shows a needle for how far off you are (in cents).
+A free, open-source guitar tuner for macOS — everything you'd expect from a paid tuner app, without the price tag. Pluck a string, the app detects the note and shows a needle with how far off you are in cents.
 
-Built with Swift + SwiftUI. Pitch detection uses the McLeod Pitch Method (MPM) — a time-domain algorithm based on the Normalized Square Difference Function with parabolic interpolation and string-aware hint detection. YIN/CMNDF is available as a drop-in alternative.
+Built with Swift + SwiftUI. 
+
+> iOS support is planned.
 
 ## Features
 
-- **16 tunings** — Standard, Drop, Modal, and Open tunings
-- **Visual needle** with a ±5 cent green zone; hold steady and the string is marked as in tune
-- **Pin a string** — tap any string on the headstock to lock tuning to it and hear a reference tone; uses harmonic folding so low strings (E2, C#2…) are detected even when the fundamental is quiet
-- **Shows actual note** — if the detected pitch doesn't match the target string, the app shows what note you're actually playing
-- **Menu bar mode** — a compact popover lives in the macOS menu bar; the status item shows the detected note in real time so you can tune without opening the main window
-- **Auto sensitivity** — gain is scaled automatically for lower tunings (Drop B, Drop A, etc.) to compensate for reduced acoustic output of low strings
+- **16 tunings** — Standard, Drop, Modal, and Open
+- **Visual needle** — ±5 cent green zone; hold steady and the string is marked as in tune
+- **Menu bar mode** — compact popover in the macOS menu bar with real-time note detection
+- **Pin a string** — lock detection to one string and hear a reference tone for more precise tuning
+- **Reference pitch** — choose A4 from 432 / 440 / 441 / 442 / 443 Hz
 - **Audio interface support** — tested with Focusrite Scarlett Solo (4th Gen)
 
 ## Demo
 
-**Start screen** - pick a tuning and input device, then play a string.
+**Start screen** — pick a tuning and input device, then play a string.
 
 ![Start screen](.github/demos/demo-start.png)
 
-**Tuning** - the needle shows how many cents off you are; the active string is highlighted and the app tells you which way to turn the peg.
+**Tuning** — the needle shows how many cents off you are; the active string is highlighted and the app tells you which way to turn the peg.
 
 ![Tuning](.github/demos/demo-tune-it.png)
 
-**In tune** - hold the note steady and the string is marked with a checkmark.
+**In tune** — hold the note steady and the string is marked with a checkmark.
 
 ![In tune](.github/demos/demo-tuned.png)
+
+**Settings** — reference pitch, headstock layout, and detection algorithm.
+
+![Settings](.github/demos/demo-settings.png)
 
 ## Download
 
@@ -41,22 +46,14 @@ Open the DMG and drag Guitar Tuner into Applications. The app is ad-hoc signed, 
 
 ## Input devices
 
-| Source | Status |
-|--------|--------|
-| **Audio interface (Focusrite)** | Tested and works well. Focusrite Scarlett Solo (4th Gen) was the only interface used during development — other brands/models are untested. |
-| **Built-in Mac microphone** | Works. For low strings (E2 and below) pin the string on the headstock to improve detection. |
-| **Bluetooth / Continuity mic (e.g. iPhone)** | Untested; may work with the same limitations as the built-in mic. |
+| Source | Notes | Test result |
+|--------|-------|-------------|
+| **Audio interface (Focusrite Scarlett Solo 4th Gen)** | Direct guitar → interface connection. Only this model was tested — other interfaces are untested. | ✅ All strings |
+| **Built-in Mac microphone** | Pin a string on the headstock to improve detection of low strings. | ✅ Strings 1–5 · ⚠️ String 6 (weak acoustic output) |
+| **Bluetooth / Continuity mic (e.g. iPhone)** | Electric guitar → amplifier → mic. | ✅ All strings |
+| **Electric guitar unplugged** | Acoustic output only, no amp. | ✅ Strings 1–5 · ⚠️ String 6 — expected, PRs welcome |
 
-For serious tuning, a direct guitar → interface connection is strongly recommended.
-
-### Electric guitar + microphone
-
-Tested on an electric guitar played **without an amplifier** (acoustic string output only):
-
-- **With audio interface** — all strings detected reliably, tuning works great.
-- **Without interface (built-in mic)** — strings 1–5 work well. String 6 (lowest E/D/C#…) is poorly detected due to the weak acoustic output of an unplugged electric guitar. This is expected behaviour — the fundamental is simply too quiet for the microphone to pick up cleanly.
-
-If you have ideas on how to improve low-string detection without an interface, PRs are welcome.
+For serious tuning, a direct guitar interface connection is strongly recommended.
 
 ## Tunings
 
